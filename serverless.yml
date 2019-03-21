@@ -1,0 +1,116 @@
+
+service: testGraphqlApi
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  apiname: ${opt:apiname, 'testGraphqlApi-dev'}
+
+plugins:
+  - serverless-appsync-plugin
+
+# This is our Appsync infrastructure, consumed by the serverless-appsync-plugin:
+custom:
+  accountId: { Ref: AWS::AccountId }
+  appSync:
+    name: ${self:provider.apiname}
+    region: ${self:provider.region}
+    authenticationType: AMAZON_COGNITO_USER_POOLS
+    userPoolConfig:
+      awsRegion: { Ref: AWS::Region }
+      defaultAction: ALLOW
+      userPoolId: { Ref: UserPool }
+    serviceRole: "AppSyncServiceRole"
+    dataSources:
+      - type: AMAZON_DYNAMODB
+        name: testGraphqlApiTableDS
+        config:
+          tableName: { Ref: testGraphqlApiTable }
+          serviceRoleArn: { Fn::GetAtt: [ DynamoDBRole, Arn ] }
+    mappingTemplates:
+      - dataSource: testGraphqlApiTableDS
+        type: Query
+        field: getUser
+        request: "getuser-request.vtl"
+        response: "common-response.vtl"
+      - dataSource: testGraphqlApiTableDS
+        type: Mutation
+        field: saveUser
+        request: "saveuser-request.vtl"
+        response: "common-response.vtl"
+      - dataSource: testGraphqlApiTableDS
+        type: Mutation
+        field: deleteUser
+        request: "deleteuser-request.vtl"
+        response: "common-response.vtl"
+
+# These are our normal Serverless Framework IaC:
+resources:
+  Resources:
+    # Amazon Cognito user pool
+    UserPool:
+      Type: "AWS::Cognito::UserPool"
+      Properties:
+        UserPoolName: ${self:provider.apiname}-user-pool
+
+    # An app client for the Amazon Cognito user pool
+    UserPoolClient:
+      Type: "AWS::Cognito::UserPoolClient"
+      Properties:
+        ClientName: ${self:provider.apiname}-appsync-client
+        GenerateSecret: false
+        UserPoolId: { Ref: UserPool }
+
+    # DynamoDB Table
+    testGraphqlApiTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        TableName: ${self:provider.apiname}-kugelblitz-table
+        AttributeDefinitions:
+          - AttributeName: "UserId"
+            AttributeType: "S"
+        KeySchema:
+          - AttributeName: "UserId"
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+    # IAM Policy to access Dynamo by the service
+    AppSyncDynamoDBPolicy:
+      Type: "AWS::IAM::ManagedPolicy"
+      Properties:
+        Path: /appsync/
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:DeleteItem
+                - dynamodb:UpdateItem
+                - dynamodb:Query
+                - dynamodb:Scan
+              Resource:
+                - { Fn::Join: [ '', [ { Fn::GetAtt: [ testGraphqlApiTable, Arn ] }, '/*' ] ] }
+                - { Fn::GetAtt: [ testGraphqlApiTable, Arn ] }
+
+    # IAM Role for implementing the AppSync / DynamoDB policy
+    DynamoDBRole:
+      Type: "AWS::IAM::Role"
+      DependsOn:
+        - AppSyncDynamoDBPolicy
+      Properties:
+        RoleName: ${self:provider.apiname}-appsync-dynamodb-role
+        ManagedPolicyArns:
+          - Ref: AppSyncDynamoDBPolicy
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - sts:AssumeRole
+              Principal:
+                Service:
+                  - appsync.amazonaws.com

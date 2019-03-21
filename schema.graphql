@@ -1,0 +1,25 @@
+type UserType {
+    UserId: ID!
+    firstName: String
+    lastName: String
+    likesMe: Boolean
+}
+
+type PaginatedNotes {
+    users: [UserType!]!
+    nextToken: String
+}
+
+type Query @auth(rules: [{allow: owner}]){
+    getUser(UserId: ID!): UserType
+}
+
+type Mutation {
+    saveUser(firstName: String!, lastName: String!, likesMe: Boolean): UserType
+    deleteUser(UserId: ID!): UserType
+}
+
+type Schema {
+    query: Query
+    mutation: Mutation
+}
